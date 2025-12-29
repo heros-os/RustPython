@@ -2756,7 +2756,11 @@ class POSIXProcessTestCase(BaseTestCase):
         except subprocess.SubprocessError as err:
             # _posixsubprocess uses a default message
             self.assertIsNotNone(subprocess._fork_exec)
-            self.assertEqual(str(err), "Exception occurred in preexec_fn.")
+            # TODO: RUSTPYTHON - we provide more details in the error message
+            if sys.implementation.name == 'rustpython':
+                self.assertIn("Exception occurred in preexec_fn", str(err))
+            else:
+                self.assertEqual(str(err), "Exception occurred in preexec_fn.")
         else:
             self.fail("Expected ValueError or subprocess.SubprocessError")
 

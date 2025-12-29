@@ -5,7 +5,7 @@ use crate::vm::{
     function::ArgSequence,
     ospath::OsPath,
     stdlib::posix,
-    {PyObjectRef, PyResult, TryFromObject, VirtualMachine},
+    {AsObject, PyObjectRef, PyResult, TryFromObject, VirtualMachine},
 };
 use itertools::Itertools;
 use nix::{
@@ -230,7 +230,7 @@ fn exec(args: &ForkExecArgs<'_>, procargs: ProcArgs<'_>, vm: &VirtualMachine) ->
         Ok(x) => match x {},
         Err(e) => {
             let mut pipe = args.errpipe_write;
-            if matches!(ctx, ExecErrorContext::PreExec) {
+            if matches!(ctx, ExecErrorContext::PreExec(_)) {
                 // For preexec_fn errors, use SubprocessError format (errno=0)
                 let _ = write!(pipe, "SubprocessError:0:{}", ctx.as_msg());
             } else {
@@ -245,16 +245,16 @@ fn exec(args: &ForkExecArgs<'_>, procargs: ProcArgs<'_>, vm: &VirtualMachine) ->
 enum ExecErrorContext {
     NoExec,
     ChDir,
-    PreExec,
+    PreExec(String),
     Exec,
 }
 
 impl ExecErrorContext {
-    const fn as_msg(&self) -> &'static str {
+    fn as_msg(&self) -> &str {
         match self {
             Self::NoExec => "noexec",
             Self::ChDir => "noexec:chdir",
-            Self::PreExec => "Exception occurred in preexec_fn.",
+            Self::PreExec(msg) => msg,
             Self::Exec => "",
         }
     }
@@ -355,9 +355,13 @@ fn exec_inner(
     if let Some(ref preexec_fn) = args.preexec_fn {
         match preexec_fn.call((), vm) {
             Ok(_) => {}
-            Err(_e) => {
+            Err(e) => {
                 // Cannot safely stringify exception after fork
-                *ctx = ExecErrorContext::PreExec;
+                let msg = match e.as_object().repr(vm) {
+                    Ok(s) => format!("Exception occurred in preexec_fn: {}", s.as_str()),
+                    Err(_) => "Exception occurred in preexec_fn.".to_string(),
+                };
+                *ctx = ExecErrorContext::PreExec(msg);
                 return Err(Errno::UnknownErrno);
             }
         }
